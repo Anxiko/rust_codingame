@@ -91,8 +91,8 @@ impl Feedback {
 
 #[derive(Debug)]
 enum CharacterRule {
-    ContainsCharacterExact { idx: usize, chr: char },
-    ContainsCharacter { chr: char },
+    ContainsCharacterHere { idx: usize, chr: char },
+    ContainsCharacterElsewhere { idx: usize, chr: char },
     NotContainsCharacter { chr: char },
 }
 
@@ -101,19 +101,19 @@ impl CharacterRule {
     fn new(chr: char, idx: usize, state: CharacterFeedback) -> Self {
         match state {
             CharacterFeedback::Unknown => panic!("Can't build rule from unknown state"),
-            CharacterFeedback::Correct => Self::ContainsCharacterExact { idx, chr },
-            CharacterFeedback::PresentMisplaced => Self::ContainsCharacter { chr },
+            CharacterFeedback::Correct => Self::ContainsCharacterHere { idx, chr },
+            CharacterFeedback::PresentMisplaced => Self::ContainsCharacterElsewhere { idx, chr },
             CharacterFeedback::NotPresent => Self::NotContainsCharacter { chr }
         }
     }
 
     fn satisfies(&self, chars: &[char; CHARACTERS_PER_WORD]) -> bool {
         match self {
-            Self::ContainsCharacterExact { chr, idx } => {
+            Self::ContainsCharacterHere { chr, idx } => {
                 chars[*idx] == *chr
             }
-            Self::ContainsCharacter { chr } => {
-                chars.contains(chr)
+            Self::ContainsCharacterElsewhere { idx, chr } => {
+                chars.contains(chr) && chars[*idx] != *chr
             }
             Self::NotContainsCharacter { chr } => {
                 !chars.contains(chr)
@@ -132,7 +132,7 @@ impl RuleSet {
             guess
                 .chars()
                 .enumerate()
-                .zip(feedback.into_iter())
+                .zip(feedback.iter())
                 .map(|((idx, chr), &state)|
                     CharacterRule::new(chr, idx, state))
                 .collect();
@@ -188,7 +188,7 @@ impl WordSolver {
     }
 
     fn update(&mut self, guess: &str, feedback: &[CharacterFeedback; CHARACTERS_PER_WORD]) {
-        let ruleset = RuleSet::from_guess_feedback(guess, &feedback);
+        let ruleset = RuleSet::from_guess_feedback(guess, feedback);
         self.dictionary.retain(|word| ruleset.satisfies(word))
     }
 }
@@ -210,7 +210,7 @@ fn main() {
             }
             Feedback::PerCharacter(per_character) => {
                 word_solver.update(&guess, &per_character);
-            },
+            }
             feedback => panic!("Unexpected feedback {feedback:?}")
         }
     }
