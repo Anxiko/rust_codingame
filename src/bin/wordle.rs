@@ -1,5 +1,6 @@
 // https://www.codingame.com/multiplayer/optimization/wordle
 
+use std::cmp::Reverse;
 use std::collections::HashSet;
 use std::convert::TryInto;
 use std::io;
@@ -155,18 +156,37 @@ impl RuleSet {
     }
 }
 
+struct Heuristic {
+    double_values: HashSet<char>,
+}
+
+impl Heuristic {
+    fn new(double_values: HashSet<char>) -> Self {
+        Self { double_values }
+    }
+
+    fn evaluate(&self, word: &str) -> u32 {
+        let unique_characters: HashSet<char> = word.chars().collect();
+        let score =
+            unique_characters.len()
+                + unique_characters.intersection(&self.double_values).count();
+        score as u32
+    }
+}
+
 struct WordSolver {
-    dictionary: HashSet<String>,
+    dictionary: Vec<String>,
 }
 
 impl WordSolver {
-    fn new(dictionary: HashSet<String>) -> Self {
+    fn new(mut dictionary: Vec<String>, heuristic: Heuristic) -> Self {
+        dictionary.sort_by_cached_key(|s| Reverse(heuristic.evaluate(s)));
         Self { dictionary }
     }
 
     fn read() -> Self {
         let n_words: usize = read_input();
-        let dictionary: HashSet<_> =
+        let dictionary: Vec<_> =
             read_input::<String>()
                 .split_whitespace()
                 .map(String::from)
@@ -176,13 +196,12 @@ impl WordSolver {
             panic!("Unexpected number of words in dictionary");
         }
 
-        Self::new(dictionary)
+        Self::new(dictionary, Heuristic::new("AEIOU".chars().collect()))
     }
 
     fn generate_guess(&self) -> String {
         self.dictionary
-            .iter()
-            .next()
+            .first()
             .unwrap()
             .to_owned()
     }
@@ -211,7 +230,7 @@ fn main() {
             Feedback::PerCharacter(per_character) => {
                 word_solver.update(&guess, &per_character);
             }
-            feedback => panic!("Unexpected feedback {feedback:?}")
+            feedback => panic!("Unexpected feedback {:?}", feedback)
         }
     }
 }
