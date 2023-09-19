@@ -54,6 +54,32 @@ impl RegisterBank {
 
         *r_ref = v;
     }
+
+    fn from_stdin() -> Result<Self, ()> {
+        let mut raw_bank = String::new();
+        io::stdin().read_line(&mut raw_bank).unwrap();
+
+        Self::from_str(&raw_bank)
+    }
+}
+
+impl FromStr for RegisterBank {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let registers: Result<Vec<Word>, _> = s
+            .split_whitespace()
+            .map(Word::from_str)
+            .try_collect()
+            .map_err(|_| ());
+
+        let registers = registers?;
+
+        match registers[..] {
+            [a, b, c, d] => Ok(Self { a, b, c, d }),
+            _ => Err(())
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -67,10 +93,10 @@ impl FromStr for RegOrImm {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Register::from_str(s)
-            .map(|reg| Self::Reg(reg))
+            .map(Self::Reg)
             .or_else(|()|
                 Word::from_str(s)
-                    .map(|word| Self::Imm(word))
+                    .map(Self::Imm)
                     .map_err(|_| ())
             )
     }
@@ -129,9 +155,9 @@ struct Interpreter {
 }
 
 impl Interpreter {
-    fn new(program: Vec<Instruction>) -> Self {
+    fn new(bank: RegisterBank, program: Vec<Instruction>) -> Self {
         Self {
-            bank: RegisterBank::default(),
+            bank,
             pc: Word::default(),
             program,
         }
@@ -189,7 +215,7 @@ impl Interpreter {
     }
 
     fn run(&mut self) -> bool {
-        let pc: usize = self.pc.try_into().unwrap();
+        let pc = self.pc as usize;
         if let Some(instruction) = self.program.get(pc).copied() {
             self.execute(instruction);
             false
@@ -207,7 +233,7 @@ impl Interpreter {
 fn parse_program() -> Vec<Instruction> {
     let mut n_instructions = String::new();
     io::stdin().read_line(&mut n_instructions).unwrap();
-    let n_instructions = usize::from_str(&n_instructions).unwrap();
+    let n_instructions = usize::from_str(n_instructions.trim()).unwrap();
 
     (0..n_instructions)
         .map(|_| {
@@ -220,8 +246,9 @@ fn parse_program() -> Vec<Instruction> {
 }
 
 fn main() {
+    let register_bank = RegisterBank::from_stdin().unwrap();
     let program = parse_program();
-    let mut interpreter = Interpreter::new(program);
+    let mut interpreter = Interpreter::new(register_bank, program);
 
     while !interpreter.run() {}
 
