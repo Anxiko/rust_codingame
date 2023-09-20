@@ -1,12 +1,53 @@
 // https://www.codingame.com/multiplayer/optimization/wordle
 
-use std::cmp::Reverse;
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::convert::TryInto;
 use std::io;
 use std::str::FromStr;
+
 use itertools::Itertools;
-use ordered_float::NotNan;
+
+
+struct NotNaN {
+    value: f32,
+}
+
+impl NotNaN {
+    fn new(value: f32) -> Result<Self, ()> {
+        if value.is_nan() {
+            Err(())
+        } else {
+            Ok(Self{value})
+        }
+    }
+}
+
+impl PartialEq for NotNaN {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl Eq for NotNaN {}
+
+impl PartialOrd for NotNaN {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        if self.value == other.value {
+            Some(Ordering::Equal)
+        } else if self.value > other.value {
+            Some(Ordering::Greater)
+        } else {
+            Some(Ordering::Less)
+        }
+    }
+}
+
+impl Ord for NotNaN {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
 
 const CHARACTERS_PER_WORD: usize = 6;
 
@@ -92,7 +133,7 @@ impl Feedback {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 enum CharacterRule {
     ContainsCharacterHere { idx: usize, chr: char },
     ContainsCharacterElsewhere { idx: usize, chr: char },
@@ -110,16 +151,16 @@ impl CharacterRule {
         }
     }
 
-    fn satisfies(&self, chars: &[char; CHARACTERS_PER_WORD]) -> bool {
-        match self {
+    fn satisfies(&self, word: &Word) -> bool {
+        match *self {
             Self::ContainsCharacterHere { chr, idx } => {
-                chars[*idx] == *chr
+                word.has_char_at(&chr, idx)
             }
-            Self::ContainsCharacterElsewhere { idx, chr } => {
-                chars.contains(chr) && chars[*idx] != *chr
+            Self::ContainsCharacterElsewhere { chr, idx } => {
+                !word.has_char_at(&chr, idx) && word.has_char(&chr)
             }
             Self::NotContainsCharacter { chr } => {
-                !chars.contains(chr)
+                !word.has_char(&chr)
             }
         }
     }
@@ -143,46 +184,25 @@ impl RuleSet {
         Self { rules: rules.try_into().unwrap() }
     }
 
-    fn satisfies(&self, word: &str) -> bool {
-        let chars: [char; CHARACTERS_PER_WORD] =
-            word
-                .chars()
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap();
-
+    fn satisfies(&self, word: &Word) -> bool {
         self
             .rules
             .iter()
-            .all(|rule| rule.satisfies(&chars))
-    }
-}
-
-struct Heuristic {
-    double_values: HashSet<char>,
-}
-
-impl Heuristic {
-    fn new(double_values: HashSet<char>) -> Self {
-        Self { double_values }
-    }
-
-    fn evaluate(&self, word: &str) -> u32 {
-        let unique_characters: HashSet<char> = word.chars().collect();
-        let score =
-            unique_characters.len()
-                + unique_characters.intersection(&self.double_values).count();
-        score as u32
+            .all(|rule| rule.satisfies(word))
     }
 }
 
 struct WordSolver {
-    dictionary: Vec<String>,
+    dictionary: Vec<Word>,
 }
 
 impl WordSolver {
-    fn new(mut dictionary: Vec<String>, heuristic: Heuristic) -> Self {
-        dictionary.sort_by_cached_key(|s| Reverse(heuristic.evaluate(s)));
+    fn new(dictionary: Vec<String>) -> Self {
+        let dictionary = dictionary
+            .into_iter()
+            .map(|word| Word::from_str(&word))
+            .collect_vec();
+
         Self { dictionary }
     }
 
@@ -198,14 +218,20 @@ impl WordSolver {
             panic!("Unexpected number of words in dictionary");
         }
 
-        Self::new(dictionary, Heuristic::new("AEIOU".chars().collect()))
+        Self::new(dictionary)
     }
 
     fn generate_guess(&self) -> String {
-        self.dictionary
-            .first()
-            .unwrap()
-            .to_owned()
+        if self.dictionary.len() <= 2 {
+            let word = self.dictionary.first().expect("Not empty dictionary");
+            return word.into();
+        }
+
+        let word = DictionaryTreeNode::from_words(
+            self.dictionary.iter().collect_vec()
+        ).get_guess();
+
+        String::from(&word)
     }
 
     fn update(&mut self, guess: &str, feedback: &[CharacterFeedback; CHARACTERS_PER_WORD]) {
@@ -250,11 +276,24 @@ impl Word {
         }
     }
 
-    fn iter(&self) -> impl Iterator<Item=char> {
-        self.characters.into_iter()
+    fn iter(&self) -> impl Iterator<Item=&char> {
+        self.characters.iter()
+    }
+
+    fn has_char_at(&self, chr: &char, idx: usize) -> bool {
+        self.characters[idx] == *chr
+    }
+
+    fn has_char(&self, chr: &char) -> bool {
+        self.characters.contains(chr)
     }
 }
 
+impl From<&Word> for String {
+    fn from(value: &Word) -> Self {
+        value.iter().collect()
+    }
+}
 
 
 struct PartitionBy<'a> {
@@ -354,7 +393,7 @@ impl<'a> DictionaryTreeNode<'a> {
                         missing: Box::new(missing),
                     }
                 })
-                .max_by_key(|node| NotNan::new(node.entropy()).unwrap())
+                .max_by_key(|node| NotNaN::new(node.entropy()).unwrap())
                 .unwrap()
         }
     }
@@ -362,14 +401,27 @@ impl<'a> DictionaryTreeNode<'a> {
     fn from_words(words: Vec<&'a Word>) -> Self {
         let open_characters = words
             .iter()
-            .fold(HashSet::new(), |mut acc, word|{
-                for chr in word.iter() {
+            .fold(HashSet::new(), |mut acc, word| {
+                for &chr in word.iter() {
                     acc.insert(chr);
                 }
                 acc
             });
 
         Self::partition(words, 0, &open_characters)
+    }
+
+    fn get_guess(&self) -> Word {
+        let mut result: Vec<char> = Vec::new();
+
+        let mut node = self;
+        while let Self::PartitionedBy { chr, exact, .. } = node {
+            result.push(*chr);
+            node = exact;
+        }
+
+        let characters: [char; CHARACTERS_PER_WORD] = result.try_into().unwrap();
+        Word::new(characters)
     }
 }
 
