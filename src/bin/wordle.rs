@@ -1,11 +1,10 @@
 // https://www.codingame.com/multiplayer/optimization/wordle
 
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::convert::TryInto;
 use std::fmt::{Debug, Display, Formatter};
 use std::io;
-use std::process::id;
 use std::str::FromStr;
 
 use itertools::Itertools;
@@ -66,6 +65,18 @@ enum CharacterFeedback {
     Unknown,
 }
 
+impl Display for CharacterFeedback {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let chr = match self {
+            Self::Missing => '-',
+            Self::Misplaced => '+',
+            Self::Correct => '=',
+            Self::Unknown => '?'
+        };
+        write!(f, "{chr}")
+    }
+}
+
 impl FromStr for CharacterFeedback {
     type Err = ();
 
@@ -101,6 +112,20 @@ enum Feedback {
     Correct,
 }
 
+impl Display for Feedback {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let chr_feedbacks: [CharacterFeedback; CHARACTERS_PER_WORD] = match self {
+            Self::PerCharacter(feedbacks) => *feedbacks,
+            Self::Correct => [CharacterFeedback::Correct; CHARACTERS_PER_WORD],
+            Self::Unknown => [CharacterFeedback::Unknown; CHARACTERS_PER_WORD]
+        };
+        for feedback in chr_feedbacks {
+            write!(f, "{feedback}")?;
+        }
+        Ok(())
+    }
+}
+
 impl Feedback {
     fn read() -> Self {
         let feedbacks = CharacterFeedback::read_feedback();
@@ -134,13 +159,13 @@ impl Feedback {
     }
 
     fn from_guess(guess: &Word, chosen: &Word) -> Self {
-        let char_feedback: [CharacterFeedback; CHARACTERS_PER_WORD] = chosen
+        let char_feedback: [CharacterFeedback; CHARACTERS_PER_WORD] = guess
             .iter()
             .enumerate()
             .map(|(idx, c)| {
-                if guess.has_char_at(c, idx) {
+                if chosen.has_char_at(c, idx) {
                     CharacterFeedback::Correct
-                } else if guess.has_char(c) {
+                } else if chosen.has_char(c) {
                     CharacterFeedback::Misplaced
                 } else {
                     CharacterFeedback::Missing
@@ -260,13 +285,26 @@ impl WordSolver {
         Self::new(dictionary)
     }
 
-    fn generate_guess(&self) -> Word {
+    fn generate_guess_by_bruteforce(&self) -> Word {
         if self.dictionary.len() <= 2 {
             let word = self.dictionary.first().expect("Not empty dictionary");
             return word.clone();
         }
 
         DictionaryTreeNode::from_words(self.dictionary.iter().collect_vec())
+            .get_guess()
+    }
+
+    fn generate_guess_by_words(&self) -> Word {
+        self.dictionary
+            .iter()
+            .enumerate()
+            .map(|(idx, word)| {
+                // eprintln!("[{}/{}] => {word}", idx + 1, self.dictionary.len());
+                DictionaryTreeNode::by_word(self.dictionary.iter().collect_vec(), word)
+            })
+            .max_by_key(|node| NotNaN::new(node.entropy()).unwrap())
+            .unwrap()
             .get_guess()
     }
 
@@ -467,6 +505,30 @@ impl<'a> DictionaryTreeNode<'a> {
         Self::partition(words, 0, &open_characters)
     }
 
+    fn by_word(words: Vec<&'a Word>, word: &Word) -> Self {
+        Self::by_chars(words, word.iter().copied().enumerate().collect())
+    }
+
+    fn by_chars(words: Vec<&'a Word>, mut chars: VecDeque<(usize, char)>) -> Self {
+        if let Some((idx, chr)) = chars.pop_front() {
+            let partition = PartitionBy::partition(&words, chr, idx);
+
+            let exact = Self::by_chars(partition.exact, chars.clone());
+            let misplaced = Self::by_chars(partition.misplaced, chars.clone());
+            let missing = Self::by_chars(partition.missing, chars);
+
+            Self::PartitionedBy {
+                chr,
+                idx,
+                exact: Box::new(exact),
+                misplaced: Box::new(misplaced),
+                missing: Box::new(missing),
+            }
+        } else {
+            Self::Leaf(words)
+        }
+    }
+
     fn get_guess(&self) -> Word {
         let mut result: Vec<char> = Vec::new();
 
@@ -489,7 +551,7 @@ fn main() {
     }
 
     loop {
-        let guess = word_solver.generate_guess();
+        let guess = word_solver.generate_guess_by_bruteforce();
         println!("{guess}");
 
         match Feedback::read() {
@@ -511,6 +573,7 @@ mod tests {
     use std::io::{BufRead, BufReader};
 
     use rand::{seq::IteratorRandom, thread_rng};
+
     use crate::{Feedback, Word, WordSolver};
 
     const FILE_PATH: &str = "words_alpha.txt";
@@ -534,16 +597,20 @@ mod tests {
         assert_eq!(words.len(), N_WORDS);
 
         let chosen: Word = Word::from_str(&words.iter().choose(&mut rng).unwrap().to_owned());
+        eprintln!("Chosen word: {chosen}");
 
         let mut word_solver = WordSolver::new(words);
         let mut n_tries = 0u32;
 
         loop {
-            let guess = word_solver.generate_guess();
+            let guess = word_solver.generate_guess_by_words();
             let feedback = Feedback::from_guess(&guess, &chosen);
             n_tries += 1;
 
-            eprintln!("Guessed {guess} on try #{n_tries}");
+            eprintln!("Guess {n_tries}, {} word(s)", word_solver.dictionary.len());
+            eprintln!("{chosen}");
+            eprintln!("{guess}");
+            eprintln!("{feedback}");
 
             match feedback {
                 Feedback::Correct => break,
