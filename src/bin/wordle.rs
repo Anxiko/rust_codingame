@@ -3,11 +3,12 @@
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::convert::TryInto;
+use std::fmt::{Debug, Display, Formatter};
 use std::io;
+use std::process::id;
 use std::str::FromStr;
 
 use itertools::Itertools;
-
 
 struct NotNaN {
     value: f32,
@@ -18,7 +19,7 @@ impl NotNaN {
         if value.is_nan() {
             Err(())
         } else {
-            Ok(Self{value})
+            Ok(Self { value })
         }
     }
 }
@@ -57,10 +58,10 @@ fn read_input<T: FromStr>() -> T {
     s.trim().parse().ok().unwrap()
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum CharacterFeedback {
-    NotPresent,
-    PresentMisplaced,
+    Missing,
+    Misplaced,
     Correct,
     Unknown,
 }
@@ -71,8 +72,8 @@ impl FromStr for CharacterFeedback {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "0" => Ok(Self::Unknown),
-            "1" => Ok(Self::NotPresent),
-            "2" => Ok(Self::PresentMisplaced),
+            "1" => Ok(Self::Missing),
+            "2" => Ok(Self::Misplaced),
             "3" => Ok(Self::Correct),
             _ => Err(())
         }
@@ -131,6 +132,43 @@ impl Feedback {
             _ => panic!("Unexpected number of unknown feedback: {unknowns}")
         }
     }
+
+    fn from_guess(guess: &Word, chosen: &Word) -> Self {
+        let char_feedback: [CharacterFeedback; CHARACTERS_PER_WORD] = chosen
+            .iter()
+            .enumerate()
+            .map(|(idx, c)| {
+                if guess.has_char_at(c, idx) {
+                    CharacterFeedback::Correct
+                } else if guess.has_char(c) {
+                    CharacterFeedback::Misplaced
+                } else {
+                    CharacterFeedback::Missing
+                }
+            })
+            .collect_vec()
+            .try_into()
+            .unwrap();
+
+        let unknowns = char_feedback
+            .iter()
+            .copied()
+            .filter(|&cf| cf == CharacterFeedback::Unknown)
+            .count();
+
+        if unknowns > 0 {
+            if unknowns == CHARACTERS_PER_WORD {
+                return Self::Unknown;
+            }
+            panic!("Invalid count of unknowns: {unknowns}")
+        }
+
+        if char_feedback.iter().all(|&feedback| feedback == CharacterFeedback::Correct) {
+            return Self::Correct;
+        }
+
+        Self::PerCharacter(char_feedback)
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -146,8 +184,8 @@ impl CharacterRule {
         match state {
             CharacterFeedback::Unknown => panic!("Can't build rule from unknown state"),
             CharacterFeedback::Correct => Self::ContainsCharacterHere { idx, chr },
-            CharacterFeedback::PresentMisplaced => Self::ContainsCharacterElsewhere { idx, chr },
-            CharacterFeedback::NotPresent => Self::NotContainsCharacter { chr }
+            CharacterFeedback::Misplaced => Self::ContainsCharacterElsewhere { idx, chr },
+            CharacterFeedback::Missing => Self::NotContainsCharacter { chr }
         }
     }
 
@@ -171,10 +209,11 @@ struct RuleSet {
 }
 
 impl RuleSet {
-    fn from_guess_feedback(guess: &str, feedback: &[CharacterFeedback; CHARACTERS_PER_WORD]) -> Self {
+    fn from_guess_feedback(guess: &Word, feedback: &[CharacterFeedback; CHARACTERS_PER_WORD]) -> Self {
         let rules: Vec<_> =
             guess
-                .chars()
+                .iter()
+                .copied()
                 .enumerate()
                 .zip(feedback.iter())
                 .map(|((idx, chr), &state)|
@@ -221,20 +260,17 @@ impl WordSolver {
         Self::new(dictionary)
     }
 
-    fn generate_guess(&self) -> String {
+    fn generate_guess(&self) -> Word {
         if self.dictionary.len() <= 2 {
             let word = self.dictionary.first().expect("Not empty dictionary");
-            return word.into();
+            return word.clone();
         }
 
-        let word = DictionaryTreeNode::from_words(
-            self.dictionary.iter().collect_vec()
-        ).get_guess();
-
-        String::from(&word)
+        DictionaryTreeNode::from_words(self.dictionary.iter().collect_vec())
+            .get_guess()
     }
 
-    fn update(&mut self, guess: &str, feedback: &[CharacterFeedback; CHARACTERS_PER_WORD]) {
+    fn update(&mut self, guess: &Word, feedback: &[CharacterFeedback; CHARACTERS_PER_WORD]) {
         let ruleset = RuleSet::from_guess_feedback(guess, feedback);
         self.dictionary.retain(|word| ruleset.satisfies(word))
     }
@@ -247,6 +283,7 @@ enum PartitionResult {
     Missing,
 }
 
+#[derive(Debug, Clone)]
 struct Word {
     characters: [char; CHARACTERS_PER_WORD],
 }
@@ -295,6 +332,13 @@ impl From<&Word> for String {
     }
 }
 
+impl Display for Word {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let word = String::from(self);
+        std::fmt::Display::fmt(&word, f)
+    }
+}
+
 
 struct PartitionBy<'a> {
     exact: Vec<&'a Word>,
@@ -328,7 +372,9 @@ fn entropy(probabilities: &[f32]) -> f32 {
     let s: f32 = probabilities
         .iter()
         .copied()
-        .map(|p| p * p.log2())
+        .map(|p|
+            if p == 0f32 { p } else { p * p.log2() }
+        )
         .sum();
     -s
 }
@@ -376,10 +422,20 @@ impl<'a> DictionaryTreeNode<'a> {
         if idx == CHARACTERS_PER_WORD {
             DictionaryTreeNode::Leaf(words)
         } else {
+            let open_chars_count = open_characters.len();
+
             open_characters
                 .iter()
                 .copied()
-                .map(|chr| {
+                .enumerate()
+                .map(|(chr_idx, chr)| {
+                    if idx < 3 {
+                        eprintln!(
+                            "Partition[{:02}/{open_chars_count:02}]: {}{}",
+                            chr_idx + 1, String::from("=").repeat(idx), String::from(chr)
+                        );
+                    }
+
                     let (exact, misplaced, missing) = PartitionBy::partition(&words, chr, idx).split();
                     let exact = Self::partition(exact, idx + 1, open_characters);
                     let misplaced = Self::partition(misplaced, idx + 1, open_characters);
@@ -445,5 +501,59 @@ fn main() {
             }
             feedback => panic!("Unexpected feedback {:?}", feedback)
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+
+    use rand::{seq::IteratorRandom, thread_rng};
+    use crate::{Feedback, Word, WordSolver};
+
+    const FILE_PATH: &str = "words_alpha.txt";
+    const N_WORDS: usize = 10_000;
+
+
+    #[test]
+    fn test_from_file() {
+        let file = File::open(FILE_PATH).unwrap();
+        let reader = BufReader::new(file);
+        let mut rng = thread_rng();
+
+        let words = reader
+            .lines()
+            .map(|word| word.unwrap())
+            .filter(|word| word.len() == 6)
+            .filter(|word| word.is_ascii())
+            .map(|word| word.to_ascii_uppercase())
+            .choose_multiple(&mut rng, N_WORDS);
+
+        assert_eq!(words.len(), N_WORDS);
+
+        let chosen: Word = Word::from_str(&words.iter().choose(&mut rng).unwrap().to_owned());
+
+        let mut word_solver = WordSolver::new(words);
+        let mut n_tries = 0u32;
+
+        loop {
+            let guess = word_solver.generate_guess();
+            let feedback = Feedback::from_guess(&guess, &chosen);
+            n_tries += 1;
+
+            eprintln!("Guessed {guess} on try #{n_tries}");
+
+            match feedback {
+                Feedback::Correct => break,
+                Feedback::PerCharacter(feedback) => {
+                    word_solver.update(&guess, &feedback);
+                }
+                Feedback::Unknown => unreachable!()
+            }
+        }
+
+        eprintln!("{chosen} guessed in {n_tries} tries")
     }
 }
