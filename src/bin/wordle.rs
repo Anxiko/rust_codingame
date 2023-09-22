@@ -4,8 +4,13 @@ use std::cmp::Ordering;
 use std::collections::{HashSet, VecDeque};
 use std::convert::TryInto;
 use std::fmt::{Debug, Display, Formatter};
-use std::io;
+use std::fs::File;
+use std::{io, thread};
+use std::io::{BufRead, BufReader};
+use std::ops::{Add, AddAssign};
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicUsize;
 
 use itertools::Itertools;
 
@@ -549,7 +554,7 @@ impl<'a> DictionaryTreeNode<'a> {
     }
 }
 
-fn main() {
+fn _main() {
     let mut word_solver = WordSolver::read();
     let initial_feedback = Feedback::read();
     if !matches!(initial_feedback, Feedback::Unknown) {
@@ -579,31 +584,94 @@ fn main() {
     }
 }
 
+fn main() {
+    let words = read_words(FILE_PATH);
+    let chunk_size: usize = ((words.len() as f32) / (N_THREADS as f32)).ceil() as usize;
+    let words_chunked = words
+        .clone()
+        .into_iter()
+        .chunks(chunk_size)
+        .into_iter()
+        .map(|chunk| chunk.collect_vec())
+        .collect_vec();
+
+    let mut n_tries = Arc::new(Mutex::new(0usize));
+
+    let handles =
+        (1..=N_THREADS)
+            .zip(words_chunked)
+            .map(|(thread, words_chunk)| thread::spawn({
+                let words = words.clone();
+                let mut n_tries = Arc::clone(&n_tries);
+                move || {
+                    let mut total_guesses = 0usize;
+
+                    for (idx, chosen) in words_chunk.iter().enumerate() {
+                        let chosen = Word::from_str(chosen);
+
+                        let mut word_solver = WordSolver::new(words.clone());
+                        let mut guesses_for_word = 0usize;
+
+                        loop {
+                            let guess = word_solver.generate_guess_by_words();
+                            let feedback = Feedback::from_guess(&guess, &chosen);
+                            guesses_for_word += 1;
+
+                            match feedback {
+                                Feedback::Correct => break,
+                                Feedback::PerCharacter(feedback) => {
+                                    word_solver.update(&guess, &feedback);
+                                }
+                                Feedback::Unknown => unreachable!()
+                            }
+                        }
+                        eprintln!("{chosen} guessed in {guesses_for_word} tries");
+
+                        total_guesses += guesses_for_word;
+                        eprintln!(
+                            "{thread} => [{}/{}], avg: {}",
+                            idx + 1, words_chunk.len(),
+                            (total_guesses as f32) / ((idx + 1) as f32)
+                        );
+                    }
+                    {
+                        let mut mutex_guard = n_tries.lock().unwrap();
+                        mutex_guard.add_assign(total_guesses);
+                    }
+                }
+            }))
+            .collect_vec();
+
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    eprintln!("Total guesses: {:?}", n_tries)
+}
+
+const FILE_PATH: &str = "wordle_words.txt";
+const N_THREADS: usize = 32;
+
+fn read_words(file: &str) -> Vec<String> {
+    let file = File::open(file).unwrap();
+    let reader = BufReader::new(file);
+
+    reader
+        .lines()
+        .map(|word| word.unwrap())
+        .filter(|word| word.len() == 6)
+        .filter(|word| word.is_ascii())
+        .map(|word| word.to_ascii_uppercase())
+        .collect_vec()
+}
+
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
-    use std::io::{BufRead, BufReader};
-
-    use itertools::Itertools;
     use rand::{seq::IteratorRandom, thread_rng};
 
-    use crate::{Feedback, Word, WordSolver};
-
-    const FILE_PATH: &str = "wordle_words.txt";
-
-    fn read_words(file: &str) -> Vec<String> {
-        let file = File::open(FILE_PATH).unwrap();
-        let reader = BufReader::new(file);
-
-        reader
-            .lines()
-            .map(|word| word.unwrap())
-            .filter(|word| word.len() == 6)
-            .filter(|word| word.is_ascii())
-            .map(|word| word.to_ascii_uppercase())
-            .collect_vec()
-    }
+    use crate::*;
 
     #[test]
     fn test_from_file() {
@@ -673,4 +741,7 @@ mod tests {
             )
         }
     }
+
+    #[test]
+    fn test_parallel() {}
 }
