@@ -9,6 +9,8 @@ use std::str::FromStr;
 
 use itertools::Itertools;
 
+const PARTITION_MAX_WORDS: Option<usize> = Some(200);
+
 struct NotNaN {
     value: f32,
 }
@@ -296,11 +298,15 @@ impl WordSolver {
     }
 
     fn generate_guess_by_words(&self) -> Word {
-        self.dictionary
-            .iter()
+        let dictionary: Box<dyn Iterator<Item=&Word>> =
+            if let Some(max_words) = PARTITION_MAX_WORDS {
+                Box::new(self.dictionary.iter().take(max_words))
+            } else {
+                Box::new(self.dictionary.iter())
+            };
+        dictionary
             .enumerate()
-            .map(|(idx, word)| {
-                // eprintln!("[{}/{}] => {word}", idx + 1, self.dictionary.len());
+            .map(|(_idx, word)| {
                 DictionaryTreeNode::by_word(self.dictionary.iter().collect_vec(), word)
             })
             .max_by_key(|node| NotNaN::new(node.entropy()).unwrap())
@@ -549,9 +555,16 @@ fn main() {
     if !matches!(initial_feedback, Feedback::Unknown) {
         println!("Expected to receive initial feedback as unknown")
     }
+    let mut precaculated_guesses: VecDeque<_> = vec!["CARIES"]
+        .into_iter()
+        .map(Word::from_str)
+        .collect();
 
     loop {
-        let guess = word_solver.generate_guess_by_bruteforce();
+        let guess = precaculated_guesses
+            .pop_front()
+            .unwrap_or_else(|| word_solver.generate_guess_by_words());
+
         println!("{guess}");
 
         match Feedback::read() {
@@ -572,29 +585,31 @@ mod tests {
     use std::fs::File;
     use std::io::{BufRead, BufReader};
 
+    use itertools::Itertools;
     use rand::{seq::IteratorRandom, thread_rng};
 
     use crate::{Feedback, Word, WordSolver};
 
-    const FILE_PATH: &str = "words_alpha.txt";
-    const N_WORDS: usize = 10_000;
+    const FILE_PATH: &str = "wordle_words.txt";
 
-
-    #[test]
-    fn test_from_file() {
+    fn read_words(file: &str) -> Vec<String> {
         let file = File::open(FILE_PATH).unwrap();
         let reader = BufReader::new(file);
-        let mut rng = thread_rng();
 
-        let words = reader
+        reader
             .lines()
             .map(|word| word.unwrap())
             .filter(|word| word.len() == 6)
             .filter(|word| word.is_ascii())
             .map(|word| word.to_ascii_uppercase())
-            .choose_multiple(&mut rng, N_WORDS);
+            .collect_vec()
+    }
 
-        assert_eq!(words.len(), N_WORDS);
+    #[test]
+    fn test_from_file() {
+        let mut rng = thread_rng();
+
+        let words = read_words(FILE_PATH);
 
         let chosen: Word = Word::from_str(&words.iter().choose(&mut rng).unwrap().to_owned());
         eprintln!("Chosen word: {chosen}");
@@ -622,5 +637,40 @@ mod tests {
         }
 
         eprintln!("{chosen} guessed in {n_tries} tries")
+    }
+
+    #[test]
+    fn test_all_words() {
+        let words = read_words(FILE_PATH);
+        let mut total_guesses = 0usize;
+
+        for (idx, chosen) in words.iter().enumerate() {
+            let chosen = Word::from_str(chosen);
+
+            let mut n_tries = 0usize;
+            let mut word_solver = WordSolver::new(words.clone());
+
+            loop {
+                let guess = word_solver.generate_guess_by_words();
+                let feedback = Feedback::from_guess(&guess, &chosen);
+                n_tries += 1;
+
+                match feedback {
+                    Feedback::Correct => break,
+                    Feedback::PerCharacter(feedback) => {
+                        word_solver.update(&guess, &feedback);
+                    }
+                    Feedback::Unknown => unreachable!()
+                }
+            }
+            eprintln!("{chosen} guessed in {n_tries} tries");
+
+            total_guesses += n_tries;
+            eprintln!(
+                "[{}/{}], avg: {}",
+                idx + 1, words.len(),
+                (total_guesses as f32) / ((idx + 1) as f32)
+            )
+        }
     }
 }
