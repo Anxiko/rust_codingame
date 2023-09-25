@@ -15,6 +15,7 @@ use itertools::Itertools;
 
 const PARTITION_MAX_WORDS: Option<usize> = Some(200);
 
+#[derive(Copy, Clone)]
 struct NotNaN {
     value: f32,
 }
@@ -380,6 +381,17 @@ impl Word {
     fn has_char(&self, chr: &char) -> bool {
         self.characters.contains(chr)
     }
+
+    fn permutations(&self) -> impl Iterator<Item=Word> {
+        self.characters
+            .into_iter()
+            .permutations(CHARACTERS_PER_WORD)
+            .map(|characters| {
+                let characters: [char; CHARACTERS_PER_WORD] = characters.try_into().unwrap();
+                Word::new(characters)
+            })
+            .unique()
+    }
 }
 
 impl From<&Word> for String {
@@ -472,6 +484,10 @@ impl<'a> DictionaryTreeNode<'a> {
             .collect_vec();
 
         entropy(&probabilities)
+    }
+
+    fn sortable_entropy(&self) -> NotNaN {
+        NotNaN::new(self.entropy()).unwrap()
     }
 
     fn partition(words: Vec<&'a Word>, idx: usize, open_characters: &HashSet<char>) -> DictionaryTreeNode<'a> {
@@ -612,6 +628,7 @@ fn read_words(file: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::convert::identity;
 
     use rand::{seq::IteratorRandom, thread_rng};
 
@@ -653,9 +670,48 @@ mod tests {
 
     #[test]
     fn extract_initial_word() {
-        let words = read_words(FILE_PATH);
-        let word_solver = WordSolver::new(words);
-        let guess = word_solver.generate_guess_by_words();
+        let words = read_words(FILE_PATH)
+            .into_iter()
+            .map(|word| Word::from_str(&word))
+            .collect_vec();
+
+        let permutations = words
+            .iter()
+            .flat_map(Word::permutations)
+            .collect_vec();
+
+        let chunk_size = (permutations.len() / N_THREADS) + 1;
+
+
+        let handles =
+            permutations
+                .into_iter()
+                .chunks(chunk_size)
+                .into_iter()
+                .map(|words_chunk| {
+                    let words_chunk = words_chunk.collect_vec();
+                    let words = words.clone();
+                    thread::spawn(move || {
+                        let root =
+                            words_chunk
+                                .into_iter()
+                                .map(|word|
+                                    DictionaryTreeNode::by_word(words.iter().collect_vec(), &word)
+                                )
+                                .max_by_key(DictionaryTreeNode::sortable_entropy)
+                                .unwrap();
+                        (root.get_guess(), root.sortable_entropy())
+                    })
+                })
+                .collect_vec();
+
+        let (guess, _entropy) =
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .max_by_key(|(_guess, entropy)| *entropy)
+                .unwrap();
+
 
         eprintln!("Initial guess: {guess}")
     }
