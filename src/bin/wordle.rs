@@ -1,16 +1,15 @@
 // https://www.codingame.com/multiplayer/optimization/wordle
 
+use std::{io, thread};
 use std::cmp::Ordering;
 use std::collections::{HashSet, VecDeque};
 use std::convert::TryInto;
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
-use std::{io, thread};
 use std::io::{BufRead, BufReader};
 use std::ops::{Add, AddAssign};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::AtomicUsize;
 
 use itertools::Itertools;
 
@@ -201,6 +200,14 @@ impl Feedback {
 
         Self::PerCharacter(char_feedback)
     }
+
+    fn get_per_character(&self) -> [CharacterFeedback; CHARACTERS_PER_WORD] {
+        match &self {
+            Self::Correct => [CharacterFeedback::Correct; CHARACTERS_PER_WORD],
+            Self::Unknown => [CharacterFeedback::Unknown; CHARACTERS_PER_WORD],
+            Self::PerCharacter(per_character) => *per_character
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -332,7 +339,7 @@ enum PartitionResult {
     Missing,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
 struct Word {
     characters: [char; CHARACTERS_PER_WORD],
 }
@@ -554,13 +561,13 @@ impl<'a> DictionaryTreeNode<'a> {
     }
 }
 
-fn _main() {
+fn main() {
     let mut word_solver = WordSolver::read();
     let initial_feedback = Feedback::read();
     if !matches!(initial_feedback, Feedback::Unknown) {
         println!("Expected to receive initial feedback as unknown")
     }
-    let mut precaculated_guesses: VecDeque<_> = vec!["CARIES"]
+    let mut precaculated_guesses: VecDeque<_> = vec!["BONIER"]
         .into_iter()
         .map(Word::from_str)
         .collect();
@@ -584,74 +591,9 @@ fn _main() {
     }
 }
 
-fn main() {
-    let words = read_words(FILE_PATH);
-    let chunk_size: usize = ((words.len() as f32) / (N_THREADS as f32)).ceil() as usize;
-    let words_chunked = words
-        .clone()
-        .into_iter()
-        .chunks(chunk_size)
-        .into_iter()
-        .map(|chunk| chunk.collect_vec())
-        .collect_vec();
-
-    let mut n_tries = Arc::new(Mutex::new(0usize));
-
-    let handles =
-        (1..=N_THREADS)
-            .zip(words_chunked)
-            .map(|(thread, words_chunk)| thread::spawn({
-                let words = words.clone();
-                let mut n_tries = Arc::clone(&n_tries);
-                move || {
-                    let mut total_guesses = 0usize;
-
-                    for (idx, chosen) in words_chunk.iter().enumerate() {
-                        let chosen = Word::from_str(chosen);
-
-                        let mut word_solver = WordSolver::new(words.clone());
-                        let mut guesses_for_word = 0usize;
-
-                        loop {
-                            let guess = word_solver.generate_guess_by_words();
-                            let feedback = Feedback::from_guess(&guess, &chosen);
-                            guesses_for_word += 1;
-
-                            match feedback {
-                                Feedback::Correct => break,
-                                Feedback::PerCharacter(feedback) => {
-                                    word_solver.update(&guess, &feedback);
-                                }
-                                Feedback::Unknown => unreachable!()
-                            }
-                        }
-                        eprintln!("{chosen} guessed in {guesses_for_word} tries");
-
-                        total_guesses += guesses_for_word;
-                        eprintln!(
-                            "{thread} => [{}/{}], avg: {}",
-                            idx + 1, words_chunk.len(),
-                            (total_guesses as f32) / ((idx + 1) as f32)
-                        );
-                    }
-                    {
-                        let mut mutex_guard = n_tries.lock().unwrap();
-                        mutex_guard.add_assign(total_guesses);
-                    }
-                }
-            }))
-            .collect_vec();
-
-
-    for handle in handles {
-        handle.join().unwrap();
-    }
-
-    eprintln!("Total guesses: {:?}", n_tries)
-}
-
 const FILE_PATH: &str = "wordle_words.txt";
 const N_THREADS: usize = 32;
+const INITIAL_GUESSES: &[&str] = &["BONIER"];
 
 fn read_words(file: &str) -> Vec<String> {
     let file = File::open(file).unwrap();
@@ -669,6 +611,8 @@ fn read_words(file: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use rand::{seq::IteratorRandom, thread_rng};
 
     use crate::*;
@@ -708,9 +652,80 @@ mod tests {
     }
 
     #[test]
+    fn extract_initial_word() {
+        let words = read_words(FILE_PATH);
+        let word_solver = WordSolver::new(words);
+        let guess = word_solver.generate_guess_by_words();
+
+        eprintln!("Initial guess: {guess}")
+    }
+
+    #[test]
+    fn extract_second_word() {
+        let words = read_words(FILE_PATH);
+        let chunk_size = (words.len() / N_THREADS) + 1;
+
+        let handles =
+            words
+                .iter()
+                .map(|word| Word::from_str(word))
+                .chunks(chunk_size)
+                .into_iter()
+                .enumerate()
+                .map(|(idx, words_chunk)| {
+                    let thread_id = idx + 1;
+                    let words_chunk = words_chunk.collect_vec();
+                    let words = words.clone();
+                    thread::spawn(move || {
+                        let mut results: HashMap<Word, f32> = HashMap::new();
+                        for chosen in words_chunk.iter() {
+                            let mut word_solver = WordSolver::new(words.clone());
+                            for initial_guess in INITIAL_GUESSES.iter().copied().map(Word::from_str) {
+                                let feedback = Feedback::from_guess(&initial_guess, &chosen);
+                                word_solver.update(&initial_guess, &feedback.get_per_character());
+                            }
+
+                            let next_guess = word_solver.generate_guess_by_words();
+                            let root = DictionaryTreeNode::by_word(
+                                word_solver.dictionary.iter().collect_vec(),
+                                &next_guess,
+                            );
+
+                            let entropy = root.entropy();
+                            eprintln!("[{thread_id}] => Entropy for chosen {chosen}, last guess {next_guess} = {entropy}");
+                            results.insert(next_guess, entropy);
+                        }
+                        results
+                    })
+                })
+                .collect_vec();
+
+        let (best_word, entropy) = handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .reduce(|mut acc, e| {
+                e.into_iter().for_each(|(k, v)| {
+                    acc.insert(k, v);
+                });
+                acc
+            })
+            .unwrap()
+            .into_iter()
+            .max_by_key(|(_word, entropy)| NotNaN::new(*entropy))
+            .unwrap();
+
+        eprintln!("Best next word is {best_word} with entropy of {entropy}");
+    }
+
+    #[test]
     fn test_all_words() {
         let words = read_words(FILE_PATH);
         let mut total_guesses = 0usize;
+        let initial_words: VecDeque<_> = INITIAL_GUESSES
+            .iter()
+            .copied()
+            .map(Word::from_str)
+            .collect();
 
         for (idx, chosen) in words.iter().enumerate() {
             let chosen = Word::from_str(chosen);
@@ -743,5 +758,70 @@ mod tests {
     }
 
     #[test]
-    fn test_parallel() {}
+    fn test_parallel() {
+        let words = read_words(FILE_PATH);
+        let chunk_size: usize = ((words.len() as f32) / (N_THREADS as f32)).ceil() as usize;
+        let words_chunked = words
+            .clone()
+            .into_iter()
+            .chunks(chunk_size)
+            .into_iter()
+            .map(|chunk| chunk.collect_vec())
+            .collect_vec();
+
+        let mut n_tries = Arc::new(Mutex::new(0usize));
+
+        let handles =
+            (1..=N_THREADS)
+                .zip(words_chunked)
+                .map(|(thread, words_chunk)| thread::spawn({
+                    let words = words.clone();
+                    let mut n_tries = Arc::clone(&n_tries);
+                    move || {
+                        let mut total_guesses = 0usize;
+
+                        for (idx, chosen) in words_chunk.iter().enumerate() {
+                            let chosen = Word::from_str(chosen);
+
+                            let mut word_solver = WordSolver::new(words.clone());
+                            let mut guesses_for_word = 0usize;
+
+                            loop {
+                                let guess = word_solver.generate_guess_by_words();
+                                let feedback = Feedback::from_guess(&guess, &chosen);
+                                guesses_for_word += 1;
+
+                                match feedback {
+                                    Feedback::Correct => break,
+                                    Feedback::PerCharacter(feedback) => {
+                                        word_solver.update(&guess, &feedback);
+                                    }
+                                    Feedback::Unknown => unreachable!()
+                                }
+                            }
+                            eprintln!("[{thread}] => {chosen} guessed in {guesses_for_word} tries");
+
+                            total_guesses += guesses_for_word;
+                            eprintln!(
+                                "[{thread}] => [{}/{}], avg: {}",
+                                idx + 1, words_chunk.len(),
+                                (total_guesses as f32) / ((idx + 1) as f32)
+                            );
+                        }
+                        {
+                            let mut mutex_guard = n_tries.lock().unwrap();
+                            mutex_guard.add_assign(total_guesses);
+                        }
+                    }
+                }))
+                .collect_vec();
+
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        let n_tries = n_tries.lock().unwrap();
+
+        eprintln!("Total guesses: {:?}, average {}", n_tries, (*n_tries as f32) / (words.len() as f32))
+    }
 }
