@@ -880,4 +880,17 @@ mod tests {
 
         eprintln!("Total guesses: {:?}, average {}", n_tries, (*n_tries as f32) / (words.len() as f32))
     }
+
+    #[test]
+    fn test_best() {
+        let words = read_words(FILE_PATH)
+            .into_iter()
+            .map(|word| Word::from_str(&word))
+            .collect_vec();
+        ["CARIES", "BONIER"].into_iter().map(Word::from_str).for_each(|best_word| {
+            let root = DictionaryTreeNode::by_word(words.iter().collect_vec(), &best_word);
+            let entropy = root.entropy();
+            eprintln!("{best_word} => {entropy}");
+        })
+    }
 }
