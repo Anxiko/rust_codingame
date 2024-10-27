@@ -95,9 +95,9 @@ fn possible_targets(target: IntVct, limits: IntVct) -> impl Iterator<Item=IntVct
 		.map(move |offset| offset + target)
 }
 
-const HORIZONTAL_COST: f32 = 0.3;
-const VERTICAL_COST: f32 = 0.4;
-const DIAGONAL_COST: f32 = 0.5;
+const HORIZONTAL_COST: u32 = 3;
+const VERTICAL_COST: u32 = 4;
+const DIAGONAL_COST: u32 = 5;
 const WIDTH: u32 = 200;
 const HEIGHT: u32 = 150;
 const LIMITS: IntVct = IntVct { x: WIDTH as i32, y: HEIGHT as i32 };
@@ -128,31 +128,31 @@ fn move_cross(pos: IntVct, target: IntVct) -> (u32, u32) {
 	(delta.x.unsigned_abs(), delta.y.unsigned_abs())
 }
 
-fn distance_to_target(pos: IntVct, target: IntVct) -> f32 {
+fn distance_to_target(pos: IntVct, target: IntVct) -> u32 {
 	let (pos, diagonal_movement) = move_diagonal(pos, target);
 	eprintln!("New pos: {pos}");
 	let (horizontal_movement, vertical_movement) = move_cross(pos, target);
 
 	eprintln!("{pos} => {target}: (hor: {horizontal_movement}, ver: {vertical_movement}, diag: {diagonal_movement})");
 
-	DIAGONAL_COST * (diagonal_movement as f32)
-		+ HORIZONTAL_COST * (horizontal_movement as f32)
-		+ VERTICAL_COST * (vertical_movement as f32)
+	DIAGONAL_COST * (diagonal_movement)
+		+ HORIZONTAL_COST * (horizontal_movement)
+		+ VERTICAL_COST * (vertical_movement)
 }
 
 macro_rules! parse_input {
     ($x:expr, $t:ident) => ($x.trim().parse::<$t>().unwrap())
 }
 
-fn solve(pos: IntVct, target: IntVct) -> f32 {
+fn solve(pos: IntVct, target: IntVct) -> u32 {
 	possible_targets(target, LIMITS)
 		.map(|t| distance_to_target(pos, t))
-		.min_by(|a, b| a.partial_cmp(b).unwrap())
+		.min()
 		.unwrap()
 }
 
-fn format_cost(cost: f32) -> String {
-	format!("{cost:?}")
+fn format_cost(cost: u32) -> String {
+	format!("{:?}", (cost as f32) / 10.0)
 }
 
 fn main() {
@@ -193,12 +193,12 @@ mod tests {
 
 		let actual = distance_to_target(pos, target);
 
-		assert_eq!(actual, 9.5f32);
+		assert_eq!(actual, 95);
 	}
 
 	#[test]
 	fn formatted_cost() {
-		assert_eq!(format_cost(5.0f32), "5.0".to_owned());
+		assert_eq!(format_cost(50), "5.0".to_owned());
 	}
 
 	#[test]
@@ -206,9 +206,8 @@ mod tests {
 		let pos = IntVct::new(50, 15);
 		let target = IntVct::new(65, -5);
 
-		let expected = 9.5f32;
 		let actual = solve(pos, target);
 
-		assert_eq!(actual, expected);
+		assert_eq!(actual, 95);
 	}
 }
