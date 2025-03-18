@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use std::char::MAX;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io;
@@ -7,7 +8,7 @@ use std::str::FromStr;
 const BASE_DAMAGE: u32 = 10;
 const MAX_HEALTH: u32 = 5_000;
 
-#[derive(Eq, PartialEq, Hash, Clone)]
+#[derive(Eq, PartialEq, Hash, Clone, Debug)]
 enum ShipType {
     Fighter,
     Cruiser,
@@ -34,7 +35,7 @@ impl FromStr for ShipType {
     }
 }
 
-#[derive(Eq, PartialEq, Hash, Clone)]
+#[derive(Eq, PartialEq, Hash, Clone, Debug)]
 struct Ship {
     ship_type: ShipType,
     hp: u32,
@@ -113,8 +114,8 @@ where
     line.trim().parse::<T>().expect("Parse input")
 }
 
-fn min_damage_tanked(ships: Vec<Ship>, memo: &mut HashMap<Vec<Ship>, u32>) -> u32 {
-    if let Some(result) = memo.get(&ships) {
+fn min_damage_tanked(ships: &Vec<Ship>, memo: &mut HashMap<Vec<Ship>, u32>) -> u32 {
+    if let Some(result) = memo.get(ships) {
         return *result;
     }
 
@@ -129,12 +130,12 @@ fn min_damage_tanked(ships: Vec<Ship>, memo: &mut HashMap<Vec<Ship>, u32>) -> u3
             let damage_taken_before_kill = turns * damage_per_turn;
             let mut ships_copy = ships.clone();
             ships_copy[idx].active = false;
-            damage_taken_before_kill + min_damage_tanked(ships_copy, memo)
+            damage_taken_before_kill + min_damage_tanked(&ships_copy, memo)
         })
         .min()
         .unwrap_or(0);
 
-    memo.insert(ships, result);
+    memo.insert(ships.clone(), result);
 
     result
 }
@@ -150,10 +151,95 @@ fn main() {
         .try_collect()
         .expect("Parse ships");
 
-    let min_damage = min_damage_tanked(ships, &mut HashMap::new());
-    if min_damage >= MAX_HEALTH {
-        println!("FLEE")
+    let min_damage = min_damage_tanked(&ships, &mut HashMap::new());
+    if let Some(remaining) = MAX_HEALTH.checked_sub(min_damage) {
+        println!("{remaining}");
     } else {
-        println!("{min_damage}")
+        println!("FLEE");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strongest_first() {
+        let ships = "\
+FIGHTER 10 0 500
+FIGHTER 10 0 800
+"
+        .lines()
+        .map(|line| Ship::from_str(line).unwrap())
+        .collect_vec();
+
+        assert_eq!(
+            MAX_HEALTH - min_damage_tanked(&ships, &mut HashMap::new()),
+            3200
+        );
+    }
+
+    #[test]
+    fn the_swarm() {
+        let ships = "\
+FIGHTER 26 6 1
+CRUISER 14 3 3
+CRUISER 25 6 4
+CRUISER 13 5 4
+CRUISER 19 7 3
+FIGHTER 12 7 2
+FIGHTER 21 0 2
+FIGHTER 15 3 3
+FIGHTER 26 1 1
+CRUISER 21 4 3
+FIGHTER 18 5 3
+FIGHTER 30 0 2
+CRUISER 20 8 3
+FIGHTER 22 3 4
+FIGHTER 6 6 3
+CRUISER 13 5 2
+CRUISER 11 2 3
+CRUISER 14 1 4
+FIGHTER 9 6 3
+CRUISER 14 2 4
+CRUISER 5 2 1
+FIGHTER 9 3 2
+FIGHTER 6 0 3
+FIGHTER 13 0 1
+CRUISER 19 1 1
+FIGHTER 15 3 4
+FIGHTER 8 1 4
+CRUISER 9 7 1
+CRUISER 14 5 2
+FIGHTER 19 4 3
+FIGHTER 15 0 1
+FIGHTER 8 7 3
+FIGHTER 26 0 4
+FIGHTER 21 3 1
+CRUISER 10 2 3
+FIGHTER 20 6 2
+FIGHTER 28 1 1
+CRUISER 19 8 4
+FIGHTER 14 8 3
+CRUISER 24 1 4
+CRUISER 17 4 2
+FIGHTER 20 1 1
+FIGHTER 23 4 3
+FIGHTER 18 3 2
+FIGHTER 17 3 4
+CRUISER 5 3 4
+CRUISER 18 2 2
+FIGHTER 11 0 1
+CRUISER 27 1 2
+FIGHTER 19 0 3
+"
+        .lines()
+        .map(|line| Ship::from_str(line).unwrap())
+        .collect_vec();
+
+        assert_eq!(
+            MAX_HEALTH - min_damage_tanked(&ships, &mut HashMap::new()),
+            212
+        );
     }
 }
