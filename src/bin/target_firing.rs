@@ -113,7 +113,19 @@ where
 	line.trim().parse::<T>().expect("Parse input")
 }
 
-fn min_damage_tanked(ships: &Vec<Ship>, memo: &mut HashMap<Vec<Ship>, u32>) -> u32 {
+fn min_damage_tanked(
+	damage_taken: u32,
+	ships: &Vec<Ship>,
+	memo: &mut HashMap<Vec<Ship>, Result<u32, ()>>,
+) -> Result<u32, ()> {
+	if damage_taken >= MAX_HEALTH {
+		return Err(());
+	}
+
+	if ships.iter().all(|ship| !ship.active) {
+		return Ok(damage_taken);
+	}
+
 	if let Some(result) = memo.get(ships) {
 		return *result;
 	}
@@ -124,15 +136,16 @@ fn min_damage_tanked(ships: &Vec<Ship>, memo: &mut HashMap<Vec<Ship>, u32>) -> u
 		.iter()
 		.enumerate()
 		.filter(|(_idx, ship)| ship.active)
-		.map(|(idx, ship)| {
+		.flat_map(|(idx, ship)| {
 			let turns = ship.turns_to_die(BASE_DAMAGE);
 			let damage_taken_before_kill = turns * damage_per_turn;
 			let mut ships_copy = ships.clone();
 			ships_copy[idx].active = false;
-			damage_taken_before_kill + min_damage_tanked(&ships_copy, memo)
+
+			min_damage_tanked(damage_taken + damage_taken_before_kill, &ships_copy, memo)
 		})
 		.min()
-		.unwrap_or(0);
+		.ok_or(());
 
 	memo.insert(ships.clone(), result);
 
@@ -150,8 +163,11 @@ fn main() {
 		.try_collect()
 		.expect("Parse ships");
 
-	let min_damage = min_damage_tanked(&ships, &mut HashMap::new());
-	if let Some(remaining) = MAX_HEALTH.checked_sub(min_damage) {
+	let min_damage = min_damage_tanked(0, &ships, &mut HashMap::new());
+	if let Some(remaining) = min_damage
+		.ok()
+		.and_then(|min_damage| MAX_HEALTH.checked_sub(min_damage))
+	{
 		println!("{remaining}");
 	} else {
 		println!("FLEE");
@@ -173,7 +189,7 @@ FIGHTER 10 0 800
 		.collect_vec();
 
 		assert_eq!(
-			MAX_HEALTH - min_damage_tanked(&ships, &mut HashMap::new()),
+			MAX_HEALTH - min_damage_tanked(0, &ships, &mut HashMap::new()).unwrap(),
 			3200
 		);
 	}
@@ -237,7 +253,7 @@ FIGHTER 19 0 3
 		.collect_vec();
 
 		assert_eq!(
-			MAX_HEALTH - min_damage_tanked(&ships, &mut HashMap::new()),
+			MAX_HEALTH - min_damage_tanked(0, &ships, &mut HashMap::new()).unwrap(),
 			212
 		);
 	}
