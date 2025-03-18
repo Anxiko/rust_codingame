@@ -27,7 +27,6 @@ struct Expedition {
 	base: Coord,
 }
 
-
 #[derive(Debug, Clone)]
 enum Tile {
 	Unreachable,
@@ -47,7 +46,7 @@ impl From<char> for Tile {
 		match value {
 			'.' => Self::Reachable,
 			'#' => Self::Unreachable,
-			team => Self::Tower(team)
+			team => Self::Tower(team),
 		}
 	}
 }
@@ -75,7 +74,10 @@ impl ActiveVisitors {
 	}
 
 	fn from_base(starting_expedition: Expedition) -> Self {
-		Self::new(Visitors::from([starting_expedition]), starting_expedition.base)
+		Self::new(
+			Visitors::from([starting_expedition]),
+			starting_expedition.base,
+		)
 	}
 
 	fn empty(coord: Coord) -> Self {
@@ -92,10 +94,7 @@ impl ActiveVisitors {
 }
 
 fn parse_line(raw_line: &str) -> Vec<Tile> {
-	raw_line
-		.chars()
-		.map(|c| c.into())
-		.collect()
+	raw_line.chars().map(|c| c.into()).collect()
 }
 
 fn get_line() -> String {
@@ -105,12 +104,8 @@ fn get_line() -> String {
 }
 
 fn read<T: FromStr>() -> T {
-	get_line()
-		.parse()
-		.ok()
-		.expect("Read and parse from stdin")
+	get_line().parse().ok().expect("Read and parse from stdin")
 }
-
 
 fn add_delta_to_coord((x, y): (usize, usize), (dx, dy): (isize, isize)) -> Option<(usize, usize)> {
 	let new_x = x.checked_add_signed(dx)?;
@@ -118,7 +113,6 @@ fn add_delta_to_coord((x, y): (usize, usize), (dx, dy): (isize, isize)) -> Optio
 
 	Some((new_x, new_y))
 }
-
 
 impl Expedition {
 	fn new(team: char, base: Coord) -> Self {
@@ -128,7 +122,6 @@ impl Expedition {
 
 struct TileMap {
 	grid: Vec<Vec<Tile>>,
-
 }
 
 impl TileMap {
@@ -171,23 +164,20 @@ impl TileMap {
 	}
 
 	fn read(&self, (x, y): (usize, usize)) -> Option<Tile> {
-		self.grid
-			.get(y)
-			.and_then(|row| row.get(x))
-			.cloned()
+		self.grid.get(y).and_then(|row| row.get(x)).cloned()
 	}
 
 	fn write(&mut self, (x, y): (usize, usize), t: Tile) {
-		let tile =
-			self.grid
-				.get_mut(y)
-				.expect("Valid row for writing")
-				.get_mut(x)
-				.expect("valid column writing");
+		let tile = self
+			.grid
+			.get_mut(y)
+			.expect("Valid row for writing")
+			.get_mut(x)
+			.expect("valid column writing");
 		*tile = t;
 	}
 
-	fn neighbour_coords(&self, coord: (usize, usize)) -> impl Iterator<Item=(usize, usize)> {
+	fn neighbour_coords(&self, coord: (usize, usize)) -> impl Iterator<Item = (usize, usize)> {
 		(-1isize..=1)
 			.into_iter()
 			.cartesian_product((-1isize..=1).into_iter())
@@ -195,30 +185,28 @@ impl TileMap {
 			.flat_map(move |delta| add_delta_to_coord(coord, delta))
 	}
 
-	fn free_neighbours(&self, coord: (usize, usize)) -> impl Iterator<Item=Coord> + '_ {
-		self.neighbour_coords(coord)
-			.filter(move |&neighbour| self.read(neighbour).is_some_and(|tile| tile.free_to_visit()))
+	fn free_neighbours(&self, coord: (usize, usize)) -> impl Iterator<Item = Coord> + '_ {
+		self.neighbour_coords(coord).filter(move |&neighbour| {
+			self.read(neighbour)
+				.is_some_and(|tile| tile.free_to_visit())
+		})
 	}
 
-	fn towers(&self) -> impl Iterator<Item=Expedition> + '_ {
+	fn towers(&self) -> impl Iterator<Item = Expedition> + '_ {
 		self.grid
 			.iter()
 			.enumerate()
 			.flat_map(|(y, row)| row.iter().enumerate().map(move |(x, tile)| ((x, y), tile)))
-			.filter_map(|(coord, tile)| {
-				match tile {
-					Tile::Tower(team) => Some(Expedition::new(*team, coord)),
-					_ => None
-				}
+			.filter_map(|(coord, tile)| match tile {
+				Tile::Tower(team) => Some(Expedition::new(*team, coord)),
+				_ => None,
 			})
 	}
 
-	fn output_lines(&self) -> impl Iterator<Item=String> + '_ {
+	fn output_lines(&self) -> impl Iterator<Item = String> + '_ {
 		self.grid
 			.iter()
-			.map(|row| {
-				row.iter().map(|tile| char::from(tile)).collect()
-			})
+			.map(|row| row.iter().map(|tile| char::from(tile)).collect())
 	}
 }
 
@@ -279,7 +267,6 @@ mod test {
 			"..........",
 		];
 
-
 		let mut tile_map = TileMap::from_lines(width, height, &lines);
 		solve(&mut tile_map);
 
@@ -298,7 +285,6 @@ JJJJJ+DIII
 		assert_eq!(format!("{tile_map}"), expected);
 	}
 }
-
 
 fn main() {
 	let width: usize = read();

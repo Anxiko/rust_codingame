@@ -1,17 +1,23 @@
+use itertools::Itertools;
 use std::collections::VecDeque;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::BufRead;
 use std::str::FromStr;
-use itertools::Itertools;
 
 #[derive(Debug)]
-struct NodeData<T> where T: Debug + Eq + Ord {
+struct NodeData<T>
+where
+	T: Debug + Eq + Ord,
+{
 	data: T,
 	left: Node<T>,
 	right: Node<T>,
 }
 
-impl<T> NodeData<T> where T: Debug + Eq + Ord {
+impl<T> NodeData<T>
+where
+	T: Debug + Eq + Ord,
+{
 	fn new(data: T, left: Node<T>, right: Node<T>) -> Self {
 		Self { data, left, right }
 	}
@@ -30,12 +36,18 @@ enum TraversalMethod {
 }
 
 #[derive(Debug)]
-enum Node<T> where T: Debug + Eq + Ord {
+enum Node<T>
+where
+	T: Debug + Eq + Ord,
+{
 	Empty,
 	WithData(Box<NodeData<T>>),
 }
 
-impl<T> Node<T> where T: Debug + Eq + Ord {
+impl<T> Node<T>
+where
+	T: Debug + Eq + Ord,
+{
 	fn root() -> Self {
 		Self::Empty
 	}
@@ -47,7 +59,7 @@ impl<T> Node<T> where T: Debug + Eq + Ord {
 	fn get_data(&self) -> Option<&NodeData<T>> {
 		match self {
 			Self::Empty => None,
-			Self::WithData(node_data) => Some(node_data.as_ref())
+			Self::WithData(node_data) => Some(node_data.as_ref()),
 		}
 	}
 
@@ -65,7 +77,6 @@ impl<T> Node<T> where T: Debug + Eq + Ord {
 			}
 		}
 	}
-
 
 	fn traverse(&self, method: TraversalMethod, visitor: &mut impl FnMut(&T) -> ()) {
 		if let Some(node_data) = self.get_data() {
@@ -105,18 +116,29 @@ impl<T> Node<T> where T: Debug + Eq + Ord {
 	}
 }
 
-fn read_from_stdin<T>() -> T where T: FromStr {
+fn read_from_stdin<T>() -> T
+where
+	T: FromStr,
+{
 	let mut buffer = String::new();
 	std::io::stdin().lock().read_line(&mut buffer).unwrap();
 
-	T::from_str(buffer.trim_end()).ok().expect("Parse from stdin")
+	T::from_str(buffer.trim_end())
+		.ok()
+		.expect("Parse from stdin")
 }
 
-struct Collector<T> where T: Clone {
+struct Collector<T>
+where
+	T: Clone,
+{
 	vec: Vec<T>,
 }
 
-impl<T> Collector<T> where T: Clone {
+impl<T> Collector<T>
+where
+	T: Clone,
+{
 	fn new() -> Self {
 		Self { vec: Vec::new() }
 	}
@@ -126,7 +148,10 @@ impl<T> Collector<T> where T: Clone {
 	}
 }
 
-impl<T> Display for Collector<T> where T: Display + Clone {
+impl<T> Display for Collector<T>
+where
+	T: Display + Clone,
+{
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		write!(f, "{}", self.vec.iter().join(" "))
 	}
@@ -149,7 +174,7 @@ fn main() {
 		TraversalMethod::PreOrder,
 		TraversalMethod::InOrder,
 		TraversalMethod::PostOrder,
-		TraversalMethod::LevelOrder
+		TraversalMethod::LevelOrder,
 	] {
 		let mut collector: Collector<i32> = Collector::new();
 
