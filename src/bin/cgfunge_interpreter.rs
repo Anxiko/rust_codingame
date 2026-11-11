@@ -107,8 +107,8 @@ impl Instruction {
                 state.push_stack(value);
             }
             Self::ArithmeticOperation(operation) => {
-                let left = state.pop_stack()?;
                 let right = state.pop_stack()?;
+                let left = state.pop_stack()?;
                 let result = operation.calculate(left, right);
                 state.push_stack(result);
             }
