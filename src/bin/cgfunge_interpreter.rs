@@ -92,6 +92,7 @@ enum Instruction {
     Duplicate,
     Conditional(Axis),
     Print { use_ascii: bool },
+    Skip,
     NoOp,
     End,
 }
@@ -145,6 +146,9 @@ impl Instruction {
                     print!("{}", value);
                 }
             }
+            Self::Skip => {
+                state.set_skipping(true);
+            }
             Self::NoOp => {}
             Self::End => {
                 state.finish();
@@ -176,7 +180,7 @@ impl TryFrom<char> for Instruction {
             '|' => Ok(Instruction::Conditional(Axis::Vertical)),
             'I' => Ok(Instruction::Print { use_ascii: false }),
             'C' => Ok(Instruction::Print { use_ascii: true }),
-            'S' => Ok(Instruction::NoOp),
+            'S' => Ok(Instruction::Skip),
             ' ' => Ok(Instruction::NoOp),
             'E' => Ok(Instruction::End),
             _ => Err(value),
@@ -208,6 +212,7 @@ struct State {
     position: Position,
     ascii_mode: bool,
     finished: bool,
+    skipping: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,8 +241,16 @@ impl State {
         self.finished
     }
 
+    fn is_skipping(&self) -> bool {
+        self.skipping
+    }
+
     fn finish(&mut self) {
         self.finished = true;
+    }
+
+    fn set_skipping(&mut self, skipping: bool) {
+        self.skipping = skipping;
     }
 
     fn push_stack(&mut self, value: Value) {
@@ -261,20 +274,24 @@ impl State {
             return Err(ExecutionError::FinishedState);
         }
 
-        let char = board.read(self.position).expect("Failed to read character from board");
+        if !self.is_skipping() {
+            let char = board.read(self.position).expect("Failed to read character from board");
 
-        if self.ascii_mode {
-            if char == '"' {
-                self.set_ascii_mode(false);
+            if self.ascii_mode {
+                if char == '"' {
+                    self.set_ascii_mode(false);
+                } else {
+                    let ascii_char: Value = char
+                        .try_into()
+                        .map_err(|_| ExecutionError::InvalidAsciiCharacter(char))?;
+                    self.push_stack(ascii_char);
+                }
             } else {
-                let ascii_char: Value = char
-                    .try_into()
-                    .map_err(|_| ExecutionError::InvalidAsciiCharacter(char))?;
-                self.push_stack(ascii_char);
+                let instruction = Instruction::try_from(char).map_err(|_| ExecutionError::InvalidInstruction(char))?;
+                instruction.execute(self)?;
             }
         } else {
-            let instruction = Instruction::try_from(char).map_err(|_| ExecutionError::InvalidInstruction(char))?;
-            instruction.execute(self)?;
+            self.set_skipping(false);
         }
 
         self.position += self.direction.delta();
@@ -343,6 +360,30 @@ mod tests {
 
         let mut state = State::default();
 
+        state.run(&board).expect("Failed to run state");
+    }
+
+    #[test]
+    fn go_all_ways() {
+        let raw_board = r#"
+v > v
+  C "
+ vC GS<
+> "GC"^
+  C "
+  G C
+ C" C
+ >^ E
+"#
+        .strip_prefix('\n')
+        .unwrap()
+        .strip_suffix('\n')
+        .unwrap();
+
+        let board_rows: Vec<Vec<char>> = raw_board.lines().map(|line| line.chars().collect()).collect();
+        let board = Board::new(board_rows);
+
+        let mut state: State = State::default();
         state.run(&board).expect("Failed to run state");
     }
 }
